@@ -12,7 +12,7 @@
 cd /srv/scratch/cruise/du/code/tqnet
 
 model_name=${1:-DLinear}
-root_path_name=../data/Timeseries-PILE/forecasting/autoformer
+root_path_name=./dataset
 seq_len_default=512
 seed=2024
 

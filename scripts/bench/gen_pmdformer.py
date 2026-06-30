@@ -3,13 +3,13 @@
 
 Source: aohu1105/PMDformer scripts/PMDformer/*.sh.
 This tqnet benchmark root currently provides the 7 standard LTSF CSV datasets
-under ../data/Timeseries-PILE/forecasting/autoformer.
+under ./dataset.
 """
 
 from pathlib import Path
 
 
-ROOT = "../data/Timeseries-PILE/forecasting/autoformer"
+ROOT = "./dataset"
 OUT = Path("scripts/bench/commands_pmdformer.txt")
 SEED = 2024
 SEQ_LEN = 720

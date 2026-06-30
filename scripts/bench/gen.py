@@ -13,7 +13,7 @@
 
 import os
 
-ROOT = "../data/Timeseries-PILE/forecasting/autoformer"
+ROOT = "./dataset"
 SEED = 2024
 SEQ_LENS = [96, 720]
 PRED_LENS = [96, 192, 336, 720]
