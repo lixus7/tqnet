@@ -1,7 +1,8 @@
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
 from models import Informer, Autoformer, Transformer, DLinear, Linear, NLinear, PatchTST, SegRNN, CycleNet, \
-    iTransformer, TimeXer, TQNet, TQDLinear, TQPatchTST, TQiTransformer
+    iTransformer, TimeXer, TQNet, TQDLinear, TQPatchTST, TQiTransformer, SparseTSF, \
+    TimesNet, Crossformer, MSGNet, SCINet, PMDformer
 from utils.tools import EarlyStopping, adjust_learning_rate, visual, test_params_flop
 from utils.metrics import metric
 
@@ -41,7 +42,13 @@ class Exp_Main(Exp_Basic):
             'TQNet': TQNet,
             'TQDLinear': TQDLinear,
             'TQPatchTST': TQPatchTST,
-            'TQiTransformer': TQiTransformer
+            'TQiTransformer': TQiTransformer,
+            'SparseTSF': SparseTSF,
+            'TimesNet': TimesNet,
+            'Crossformer': Crossformer,
+            'MSGNet': MSGNet,
+            'SCINet': SCINet,
+            'PMDformer': PMDformer
         }
         model = model_dict[self.args.model].Model(self.args).float()
 
@@ -82,7 +89,7 @@ class Exp_Main(Exp_Basic):
                         if any(substr in self.args.model for substr in {'CycleNet', 'TQ'}):
                             outputs = self.model(batch_x, batch_cycle)
                         elif any(substr in self.args.model for substr in
-                                 {'Linear', 'MLP', 'SegRNN', 'TST'}):
+                                 {'Linear', 'MLP', 'SegRNN', 'TST', 'SparseTSF'}):
                             outputs = self.model(batch_x)
                         else:
                             if self.args.output_attention:
@@ -92,7 +99,7 @@ class Exp_Main(Exp_Basic):
                 else:
                     if any(substr in self.args.model for substr in {'CycleNet', 'TQ'}):
                         outputs = self.model(batch_x, batch_cycle)
-                    elif any(substr in self.args.model for substr in {'Linear', 'MLP', 'SegRNN', 'TST'}):
+                    elif any(substr in self.args.model for substr in {'Linear', 'MLP', 'SegRNN', 'TST', 'SparseTSF'}):
                         outputs = self.model(batch_x)
                     else:
                         if self.args.output_attention:
@@ -166,7 +173,7 @@ class Exp_Main(Exp_Basic):
                         if any(substr in self.args.model for substr in {'CycleNet', 'TQ'}):
                             outputs = self.model(batch_x, batch_cycle)
                         elif any(substr in self.args.model for substr in
-                                 {'Linear', 'MLP', 'SegRNN', 'TST'}):
+                                 {'Linear', 'MLP', 'SegRNN', 'TST', 'SparseTSF'}):
                             outputs = self.model(batch_x)
                         else:
                             if self.args.output_attention:
@@ -182,7 +189,7 @@ class Exp_Main(Exp_Basic):
                 else:
                     if any(substr in self.args.model for substr in {'CycleNet', 'TQ'}):
                         outputs = self.model(batch_x, batch_cycle)
-                    elif any(substr in self.args.model for substr in {'Linear', 'MLP', 'SegRNN', 'TST'}):
+                    elif any(substr in self.args.model for substr in {'Linear', 'MLP', 'SegRNN', 'TST', 'SparseTSF'}):
                         outputs = self.model(batch_x)
                     else:
                         if self.args.output_attention:
@@ -277,7 +284,7 @@ class Exp_Main(Exp_Basic):
                         if any(substr in self.args.model for substr in {'CycleNet', 'TQ'}):
                             outputs = self.model(batch_x, batch_cycle)
                         elif any(substr in self.args.model for substr in
-                                 {'Linear', 'MLP', 'SegRNN', 'TST'}):
+                                 {'Linear', 'MLP', 'SegRNN', 'TST', 'SparseTSF'}):
                             outputs = self.model(batch_x)
                         else:
                             if self.args.output_attention:
@@ -287,7 +294,7 @@ class Exp_Main(Exp_Basic):
                 else:
                     if any(substr in self.args.model for substr in {'CycleNet', 'TQ'}):
                         outputs = self.model(batch_x, batch_cycle)
-                    elif any(substr in self.args.model for substr in {'Linear', 'MLP', 'SegRNN', 'TST'}):
+                    elif any(substr in self.args.model for substr in {'Linear', 'MLP', 'SegRNN', 'TST', 'SparseTSF'}):
                         outputs = self.model(batch_x)
                     else:
                         if self.args.output_attention:
@@ -352,6 +359,22 @@ class Exp_Main(Exp_Basic):
         f.write('\n')
         f.close()
 
+        # AEMO-aligned: persist per-(window,step,channel) preds/trues (z-score space) so the
+        # downstream harness can score any horizon aggregation (e.g. 30min headline=avg(1..32))
+        # head-to-head vs AEMO official P5/Predispatch. preds/trues: [N_windows, pred_len, C].
+        if getattr(self.args, 'data', None) == 'ours':
+            np.save(folder_path + 'pred.npy', preds)
+            np.save(folder_path + 'true.npy', trues)
+            # per-window target timestamps + region/channel order, so the AEMO-aligned
+            # harness can join forecasts to AEMO issues by (region, target_time).
+            try:
+                tt = test_data.window_target_times()           # [N, pred_len] datetime64
+                np.save(folder_path + 'target_times.npy', tt.astype('datetime64[s]').astype('int64'))
+                with open(folder_path + 'channels.txt', 'w') as cf:
+                    cf.write('\n'.join(map(str, getattr(test_data, 'kept_columns', []))))
+            except Exception as e:
+                print('warn: could not save target_times/channels:', e)
+
         # np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe,rse, corr]))
         # np.save(folder_path + 'pred.npy', preds)
         # np.save(folder_path + 'true.npy', trues)
@@ -387,7 +410,7 @@ class Exp_Main(Exp_Basic):
                         if any(substr in self.args.model for substr in {'CycleNet', 'TQ'}):
                             outputs = self.model(batch_x, batch_cycle)
                         elif any(substr in self.args.model for substr in
-                                 {'Linear', 'MLP', 'SegRNN', 'TST'}):
+                                 {'Linear', 'MLP', 'SegRNN', 'TST', 'SparseTSF'}):
                             outputs = self.model(batch_x)
                         else:
                             if self.args.output_attention:
@@ -397,7 +420,7 @@ class Exp_Main(Exp_Basic):
                 else:
                     if any(substr in self.args.model for substr in {'CycleNet', 'TQ'}):
                         outputs = self.model(batch_x, batch_cycle)
-                    elif any(substr in self.args.model for substr in {'Linear', 'MLP', 'SegRNN', 'TST'}):
+                    elif any(substr in self.args.model for substr in {'Linear', 'MLP', 'SegRNN', 'TST', 'SparseTSF'}):
                         outputs = self.model(batch_x)
                     else:
                         if self.args.output_attention:

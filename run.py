@@ -32,6 +32,14 @@ parser.add_argument('--seq_len', type=int, default=96, help='input sequence leng
 parser.add_argument('--label_len', type=int, default=0, help='start token length')  #fixed
 parser.add_argument('--pred_len', type=int, default=96, help='prediction sequence length')
 
+# SparseTSF
+parser.add_argument('--period_len', type=int, default=24, help='SparseTSF period length (seq_len & pred_len must be divisible by it)')
+
+# "ours" datasets (AEMO/TfNSW) — split aligned with MOMENT; 0 = auto per-dataset stride
+parser.add_argument('--train_stride', type=int, default=0, help='ours: training window stride (0=auto: 5min=4 else 1)')
+parser.add_argument('--eval_stride', type=int, default=0, help='ours: val/test window stride (0=auto: 5min=12,30min=1,tfnsw=24)')
+parser.add_argument('--val_ratio', type=float, default=0.1, help='ours: val fraction of full length before the test-date boundary')
+
 # TQNet & CycleNet
 parser.add_argument('--cycle', type=int, default=24, help='cycle length')
 parser.add_argument('--model_type', type=str, default='mlp', help='model type, options: [linear, mlp]')
@@ -55,6 +63,23 @@ parser.add_argument('--rnn_type', default='gru', help='rnn_type')
 parser.add_argument('--dec_way', default='pmf', help='decode way')
 parser.add_argument('--seg_len', type=int, default=48, help='segment length')
 parser.add_argument('--channel_id', type=int, default=1, help='Whether to enable channel position encoding')
+
+# TSLib baselines (TimesNet / Crossformer / MSGNet / SCINet)
+parser.add_argument('--task_name', type=str, default='long_term_forecast', help='TSLib task name')
+parser.add_argument('--top_k', type=int, default=5, help='TimesNet/MSGNet: number of dominant periods')
+parser.add_argument('--num_kernels', type=int, default=6, help='TimesNet Inception kernels')
+parser.add_argument('--num_class', type=int, default=1, help='TSLib classification head (unused for forecasting)')
+parser.add_argument('--node_dim', type=int, default=10, help='MSGNet graph node embedding dim')
+parser.add_argument('--conv_channel', type=int, default=32, help='MSGNet conv channel')
+parser.add_argument('--skip_channel', type=int, default=32, help='MSGNet skip channel')
+parser.add_argument('--gcn_depth', type=int, default=2, help='MSGNet graph conv depth')
+parser.add_argument('--propalpha', type=float, default=0.3, help='MSGNet mix-hop prop alpha')
+parser.add_argument('--subgraph_size', type=int, default=3, help='MSGNet graph top-k neighbours (<= num channels)')
+
+# PMDformer
+parser.add_argument('--use_norm', type=int, default=1, help='PMDformer: enable RevIN-style norm/denorm')
+parser.add_argument('--patch_size', type=int, default=24, help='PMDformer patch size and stride')
+parser.add_argument('--v_layers', type=int, default=2, help='PMDformer PVA encoder layers')
 
 # Formers 
 parser.add_argument('--embed_type', type=int, default=0, help='0: default 1: value embedding + temporal embedding + positional embedding 2: value embedding + temporal embedding 3: value embedding + positional embedding 4: value embedding')

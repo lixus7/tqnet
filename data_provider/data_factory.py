@@ -1,4 +1,4 @@
-from data_provider.data_loader import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom, Dataset_Pred, Dataset_Solar, Dataset_PEMS
+from data_provider.data_loader import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom, Dataset_Pred, Dataset_Solar, Dataset_PEMS, Dataset_Ours
 from torch.utils.data import DataLoader
 
 data_dict = {
@@ -8,7 +8,8 @@ data_dict = {
     'ETTm2': Dataset_ETT_minute,
     'custom': Dataset_Custom,
     'Solar': Dataset_Solar,
-    'PEMS': Dataset_PEMS
+    'PEMS': Dataset_PEMS,
+    'ours': Dataset_Ours,
 }
 
 
@@ -33,6 +34,15 @@ def data_provider(args, flag):
         batch_size = args.batch_size
         freq = args.freq
 
+    extra = {}
+    if args.data == 'ours':
+        # strides default to 0 = auto (MOMENT's per-dataset choice); see Dataset_Ours
+        extra = {
+            'train_stride': getattr(args, 'train_stride', 0),
+            'eval_stride': getattr(args, 'eval_stride', 0),
+            'val_ratio': getattr(args, 'val_ratio', 0.1),
+        }
+
     data_set = Data(
         root_path=args.root_path,
         data_path=args.data_path,
@@ -42,7 +52,8 @@ def data_provider(args, flag):
         target=args.target,
         timeenc=timeenc,
         freq=freq,
-        cycle=args.cycle
+        cycle=args.cycle,
+        **extra
     )
     print(flag, len(data_set))
     data_loader = DataLoader(

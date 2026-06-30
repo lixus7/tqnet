@@ -1,0 +1,174 @@
+#!/usr/bin/env python
+# Parse per-run logs (logs/bench/<TAG>.log) for the final "mse:..., mae:..." line and
+# emit a standalone markdown report into results/ in the TQNet-paper Table-2 layout:
+#   models as columns (MSE | MAE pairs), dataset x horizon as rows, per-dataset Avg row,
+#   bold = best in row, underline = 2nd-best in row.  One big table per look-back seq_len.
+
+import os
+import re
+import glob
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TQNET = os.path.abspath(os.path.join(HERE, "..", ".."))
+LOGDIR = os.path.join(TQNET, "logs", "bench")
+OUT = os.path.join(TQNET, "results", "BENCHMARK_RESULTS.md")
+
+# column order (paper-style: ours first), then the remaining baselines
+MODELS = ["TQNet", "TimeXer", "CycleNet", "iTransformer", "MSGNet", "TimesNet", "PatchTST",
+          "Crossformer", "DLinear", "SCINet", "NLinear", "Linear", "SparseTSF", "SegRNN",
+          "Autoformer", "Informer"]
+MODEL_HEAD = {"TQNet": "TQNet (Ours)"}
+# (display name, log key)
+DATASETS = [("ETTh1", "ETTh1"), ("ETTh2", "ETTh2"), ("ETTm1", "ETTm1"), ("ETTm2", "ETTm2"),
+            ("Electricity", "electricity"), ("Weather", "weather"), ("Traffic", "traffic")]
+SEQ_LENS = [96, 720]
+PRED_LENS = [96, 192, 336, 720]
+# cells that are intentionally not run (rendered "N/A", excluded from ranking & missing list):
+# MSGNet on traffic at sl720 is computationally infeasible (d_model>=862 forced by GraphBlock,
+# O(N^2) graph attention over 862 channels x 720 -> ~100h/run) and has no official config.
+NA = {("MSGNet", "traffic", 720, p) for p in PRED_LENS}
+
+MSE_RE = re.compile(r"mse:([0-9.eE+-]+),\s*mae:([0-9.eE+-]+)")
+TAG_RE = re.compile(r"^(?P<model>[A-Za-z]+)__(?P<ds>[A-Za-z0-9]+)__sl(?P<sl>\d+)__pl(?P<pl>\d+)$")
+
+
+def parse_logs():
+    res = {}  # (model, ds, sl, pl) -> (mse, mae)
+    for log in glob.glob(os.path.join(LOGDIR, "*.log")):
+        tag = os.path.basename(log)[:-4]
+        m = TAG_RE.match(tag)
+        if not m:
+            continue
+        mse = mae = None
+        with open(log, errors="ignore") as f:
+            for line in f:
+                mm = MSE_RE.search(line)
+                if mm:
+                    mse, mae = float(mm.group(1)), float(mm.group(2))  # keep last
+        if mse is not None:
+            res[(m["model"], m["ds"], int(m["sl"]), int(m["pl"]))] = (mse, mae)
+    return res
+
+
+def rank_marks(values):
+    """Return dict idx->'best'/'second' for the lowest and 2nd-lowest non-None values."""
+    vis = sorted([(v, i) for i, v in enumerate(values) if v is not None])
+    marks = {}
+    if vis:
+        marks[vis[0][1]] = "best"
+        # second-best = next strictly-greater value (skip ties with best)
+        for v, i in vis[1:]:
+            if v > vis[0][0] + 1e-12:
+                marks[i] = "second"
+                break
+    return marks
+
+
+def cell(v, mark):
+    if v is None:
+        return "—"
+    s = f"{v:.3f}"
+    if mark == "best":
+        return f"**{s}**"
+    if mark == "second":
+        return f"<u>{s}</u>"
+    return s
+
+
+def emit_table(lines, res, sl):
+    # header (two columns per model: MSE, MAE)
+    h1 = ["Dataset", "H"]
+    for m in MODELS:
+        name = MODEL_HEAD.get(m, m)
+        h1 += [f"{name} MSE", f"{name} MAE"]
+    lines.append("| " + " | ".join(h1) + " |")
+    lines.append("|" + "---|" * len(h1))
+
+    for disp, key in DATASETS:
+        # gather per (model, pred_len)
+        block_rows = []
+        # accumulate sums for Avg
+        sums = {m: [0.0, 0.0, 0] for m in MODELS}  # mse_sum, mae_sum, count
+        for pl in PRED_LENS:
+            mses = [(res.get((m, key, sl, pl)) or (None, None))[0] for m in MODELS]
+            maes = [(res.get((m, key, sl, pl)) or (None, None))[1] for m in MODELS]
+            mk_mse = rank_marks(mses)
+            mk_mae = rank_marks(maes)
+            cells = []
+            for i, m in enumerate(MODELS):
+                cells.append(cell(mses[i], mk_mse.get(i)))
+                cells.append(cell(maes[i], mk_mae.get(i)))
+                if mses[i] is not None:
+                    sums[m][0] += mses[i]; sums[m][1] += maes[i]; sums[m][2] += 1
+            block_rows.append((str(pl), cells))
+        # Avg row (only over completed horizons; needs all 4 to be meaningful but show partial)
+        avg_mse = [(sums[m][0] / sums[m][2]) if sums[m][2] == len(PRED_LENS) else None for m in MODELS]
+        avg_mae = [(sums[m][1] / sums[m][2]) if sums[m][2] == len(PRED_LENS) else None for m in MODELS]
+        mk_mse = rank_marks(avg_mse); mk_mae = rank_marks(avg_mae)
+        acells = []
+        for i, m in enumerate(MODELS):
+            acells.append(cell(avg_mse[i], mk_mse.get(i)))
+            acells.append(cell(avg_mae[i], mk_mae.get(i)))
+        block_rows.append(("**Avg**", acells))
+
+        # overlay N/A markers (MSGNet/traffic/sl720): replace the rendered cell text
+        na_idx = [i for i, m in enumerate(MODELS) if (m, key, sl, PRED_LENS[0]) in NA]
+        if na_idx:
+            for h, cells in block_rows:
+                for i in na_idx:
+                    cells[2 * i] = "N/A"; cells[2 * i + 1] = "N/A"
+
+        # write block (dataset name only on first row, paper-style)
+        for r, (h, cells) in enumerate(block_rows):
+            ds_col = f"**{disp}**" if r == 0 else ""
+            lines.append(f"| {ds_col} | {h} | " + " | ".join(cells) + " |")
+
+
+def main():
+    res = parse_logs()
+    done = len(res)
+    total = len(MODELS) * len(DATASETS) * len(SEQ_LENS) * len(PRED_LENS) - len(NA)
+    lines = []
+    lines.append("# TQNet Standard-Benchmark Reproduction\n")
+    lines.append("Paper: *Temporal Query Network for Efficient Multivariate Time Series "
+                 "Forecasting* (ICML 2025) — https://arxiv.org/pdf/2505.12917\n")
+    lines.append(f"Runs complete: **{done} / {total}**. Metric = MSE / MAE in the standard "
+                 "scaled (z-score) space; **lower is better**. **Bold** = best in row, "
+                 "<u>underline</u> = 2nd-best. Single seed (2024), best-val checkpoint.\n")
+    lines.append("7 datasets (PEMS/Solar absent locally). Look-back seq_len ∈ {96, 720}; "
+                 "horizon H ∈ {96,192,336,720}; **Avg** = mean over the 4 horizons. "
+                 "Hyperparameters: official per-model GitHub configs (see `scripts/bench/HYPERPARAMS.md`).\n")
+
+    for sl in SEQ_LENS:
+        lines.append(f"\n## Look-back seq_len = {sl}\n")
+        emit_table(lines, res, sl)
+
+    # overall leaderboard: mean over all completed cells, per seq_len
+    lines.append("\n## Overall average (mean over all completed dataset×horizon cells)\n")
+    lines.append("| Model | avg MSE (sl96) | avg MAE (sl96) | avg MSE (sl720) | avg MAE (sl720) |")
+    lines.append("|---|---|---|---|---|")
+    for m in MODELS:
+        row = [MODEL_HEAD.get(m, m)]
+        for sl in SEQ_LENS:
+            for mi in (0, 1):
+                vals = [(res.get((m, key, sl, pl)) or (None, None))[mi]
+                        for _, key in DATASETS for pl in PRED_LENS]
+                vals = [v for v in vals if v is not None]
+                row.append(f"{sum(vals)/len(vals):.3f}" if vals else "—")
+        lines.append("| " + " | ".join(row) + " |")
+
+    missing = [f"{m}/{key}/sl{sl}/pl{pl}"
+               for m in MODELS for _, key in DATASETS for sl in SEQ_LENS for pl in PRED_LENS
+               if (m, key, sl, pl) not in res and (m, key, sl, pl) not in NA]
+    if missing:
+        lines.append(f"\n## Not-yet-finished ({len(missing)})\n")
+        lines.append("```\n" + "\n".join(missing) + "\n```")
+
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"wrote {OUT}  ({done}/{total} runs)")
+
+
+if __name__ == "__main__":
+    main()
